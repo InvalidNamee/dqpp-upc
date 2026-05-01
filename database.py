@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS questions (
     lesson_id INTEGER,
     type TEXT,
     question_text TEXT,
-    answer_values TEXT
+    answer_values TEXT,
+    options TEXT
 );
 """
 
@@ -45,6 +46,12 @@ def get_connection() -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute(CREATE_LESSONS_TABLE)
     conn.execute(CREATE_QUESTIONS_TABLE)
+    # 兼容旧表：添加 options 列
+    try:
+        conn.execute("ALTER TABLE questions ADD COLUMN options TEXT")
+        logger.info("已为旧 questions 表添加 options 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     conn.commit()
     logger.info("数据库表初始化完成")
 
@@ -115,6 +122,7 @@ def get_question(conn: sqlite3.Connection, question_id: int) -> Optional[Questio
         type=row["type"] or "",
         question_text=row["question_text"] or "",
         answer_values=row["answer_values"] or "",
+        options=row["options"] or "",
     )
 
 
@@ -125,30 +133,33 @@ def upsert_question(
     qtype: str,
     question_text: str = "",
     answer_values: Optional[list] = None,
+    options: Optional[list] = None,
 ) -> None:
     existing = get_question(conn, question_id)
     answer_json = json.dumps(answer_values, ensure_ascii=False) if answer_values is not None else None
+    options_json = json.dumps(options, ensure_ascii=False) if options is not None else None
 
     if existing is None:
         conn.execute(
-            "INSERT INTO questions (question_id, lesson_id, type, question_text, answer_values) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (question_id, lesson_id, qtype, question_text, answer_json),
+            "INSERT INTO questions (question_id, lesson_id, type, question_text, answer_values, options) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (question_id, lesson_id, qtype, question_text, answer_json, options_json),
         )
         if answer_json:
             logger.info("新增题目: question_id=%d, type=%s, answer=%s", question_id, qtype, answer_json)
     else:
+        # 补全答案
         if not existing.answer_values and answer_json:
             conn.execute(
-                "UPDATE questions SET answer_values=?, question_text=?, type=? WHERE question_id=?",
-                (answer_json, question_text or existing.question_text, qtype, question_id),
+                "UPDATE questions SET answer_values=?, question_text=?, type=?, options=? WHERE question_id=?",
+                (answer_json, question_text or existing.question_text, qtype, options_json or existing.options, question_id),
             )
             logger.info("补全题目答案: question_id=%d, answer=%s", question_id, answer_json)
         elif answer_json:
             pass
         else:
             conn.execute(
-                "UPDATE questions SET question_text=?, type=? WHERE question_id=?",
-                (question_text or existing.question_text, qtype, question_id),
+                "UPDATE questions SET question_text=?, type=?, options=? WHERE question_id=?",
+                (question_text or existing.question_text, qtype, options_json or existing.options, question_id),
             )
     conn.commit()

@@ -30,6 +30,7 @@ class Question:
     type: str  # 'single', 'multi', 'judge'
     question_text: str = ""
     answer_values: str = ""  # JSON string
+    options: str = ""  # JSON string, 所有选项 [{"label":"A","text":"...","value":"..."}]
 
     @property
     def answers(self) -> Any:
@@ -40,3 +41,9 @@ class Question:
     @property
     def has_answer(self) -> bool:
         return bool(self.answer_values)
+
+    @property
+    def options_list(self) -> Any:
+        import json
+
+        return json.loads(self.options) if self.options else None

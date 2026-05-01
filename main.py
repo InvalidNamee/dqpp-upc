@@ -26,9 +26,10 @@ from scraper import (
     click_start_exam,
     click_view_detail,
     collect_answers_from_detail,
-    detect_question_type,
     ensure_login,
     get_lesson_list,
+    get_option_value_map,
+    get_options_list,
     get_question_card_ids,
     get_question_text,
     submit_exam,
@@ -74,24 +75,39 @@ def process_one_lesson(driver: webdriver.Chrome, conn, lesson_id: int) -> None:
 
     question_order_map: list[dict] = []
 
-    for idx, card_id in enumerate(card_ids):
+    for idx, card_info in enumerate(card_ids):
+        card_id = card_info["id"]
+        qtype = card_info["type"]
+
         if not click_question_card(driver, card_id, idx):
             continue
 
-        question_order_map.append({"index": idx, "question_id": int(card_id)})
+        # 记录 option 字母→value 映射和完整选项列表，供详情页答案收集时使用
+        option_map = get_option_value_map(driver, qtype)
+        options_list = get_options_list(driver, qtype)
 
-        short_sleep(0.5)
+        question_order_map.append({
+            "index": idx,
+            "question_id": int(card_id),
+            "option_map": option_map,
+            "options": options_list,
+        })
 
-        qtype = detect_question_type(driver)
         question_text = get_question_text(driver)
 
         known_q = get_question(conn, int(card_id))
         known_answers = known_q.answers if known_q and known_q.has_answer else None
 
         answer_question(driver, qtype, known_answers=known_answers)
+        short_sleep(0.5)
 
         if not check_card_answered(driver, card_id):
             logger.warning("题目 %d (question_id=%s) 作答后未标记为已完成", idx + 1, card_id)
+
+        # 题型组最后一题（单选→多选 / 多选→判断 / 判断→结束）：页面可能自动切走，额外等待
+        is_section_end = (idx == len(card_ids) - 1) or (card_ids[idx + 1]["type"] != qtype)
+        if is_section_end:
+            short_sleep(1.0)
 
     # 4.4 提交试卷
     if not submit_exam(driver):
@@ -112,6 +128,7 @@ def process_one_lesson(driver: webdriver.Chrome, conn, lesson_id: int) -> None:
             qtype=item["type"],
             question_text=item["question_text"],
             answer_values=item["answer_values"],
+            options=item.get("options"),
         )
 
 
