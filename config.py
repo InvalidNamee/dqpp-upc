@@ -53,8 +53,15 @@ def get_config() -> Config:
 
 
 def setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
+    fmt = logging.Formatter(
+        fmt="%(asctime)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # 终端输出
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    # 文件输出
+    file_handler = logging.FileHandler("dqpp.log", encoding="utf-8")
+    file_handler.setFormatter(fmt)
+
+    logging.basicConfig(level=logging.INFO, handlers=[console, file_handler])

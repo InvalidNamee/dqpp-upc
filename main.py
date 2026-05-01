@@ -33,6 +33,7 @@ from scraper import (
     get_question_card_ids,
     get_question_text,
     submit_exam,
+    wait_for_exam_content,
 )
 from utils import safe_find_element, short_sleep
 
@@ -81,6 +82,8 @@ def process_one_lesson(driver: webdriver.Chrome, conn, lesson_id: int) -> None:
 
         if not click_question_card(driver, card_id, idx):
             continue
+
+        wait_for_exam_content(driver)
 
         # 记录 option 字母→value 映射和完整选项列表，供详情页答案收集时使用
         option_map = get_option_value_map(driver, qtype)

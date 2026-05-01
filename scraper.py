@@ -274,12 +274,11 @@ def detect_question_type(driver: WebDriver) -> str:
 
 
 def wait_for_exam_content(driver: WebDriver) -> None:
-    """等待题目内容区加载完成 —— .answer_list 出现且包含选项 input。"""
+    """等待题目内容区加载完成 —— .answer_list 或 .answer_list_box 包含选项 input。"""
     try:
-        wait_for_element_present(driver, By.CSS_SELECTOR, ".answer_list", timeout=15)
-        # 确保至少有一个选项 input 已渲染
-        WebDriverWait(driver, 15).until(
-            lambda d: len(d.find_elements(By.CSS_SELECTOR, ".answer_list input")) > 0
+        wait_for_element_present(driver, By.CSS_SELECTOR, ".answer_list,.answer_list_box", timeout=8)
+        WebDriverWait(driver, 8).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, ".answer_list input,.answer_list_box input")) > 0
         )
     except TimeoutException:
         logger.warning("等待题目内容加载超时，继续尝试作答")
@@ -300,8 +299,8 @@ def get_option_elements(driver: WebDriver, qtype: str) -> list[WebElement]:
     单选/判断使用 radio，多选使用 checkbox。
     """
     if qtype == "multi":
-        return driver.find_elements(By.CSS_SELECTOR, ".exam_list input[type='checkbox']")
-    return driver.find_elements(By.CSS_SELECTOR, ".exam_list input[type='radio']")
+        return driver.find_elements(By.CSS_SELECTOR, ".answer_list_box input[type='checkbox']")
+    return driver.find_elements(By.CSS_SELECTOR, ".answer_list input[type='radio']")
 
 
 def _click_option_element(opt: WebElement) -> None:
@@ -364,28 +363,35 @@ def answer_question(
 
 
 def _any_option_selected(driver: WebDriver) -> bool:
-    """检查 .answer_list 中是否已有被选中的选项。无选中项 = 新题已加载。"""
+    """检查选项区域中是否已有被选中的选项（单选在 .answer_list，多选在 .answer_list_box）。
+
+    返回 False 表示：选项已渲染且全部未选中（新题就绪）。
+    返回 True 表示：有已选中的选项（旧题），或选项还没渲染出来（页面过渡中）。
+    """
     from selenium.common.exceptions import StaleElementReferenceException
 
     try:
-        for inp in driver.find_elements(By.CSS_SELECTOR, ".answer_list input"):
+        inputs = driver.find_elements(By.CSS_SELECTOR, ".answer_list input, .answer_list_box input")
+        if not inputs:
+            return True  # 内容还没渲染，当作未跳转，让外层继续重试
+        for inp in inputs:
             try:
                 if inp.is_selected():
                     return True
             except StaleElementReferenceException:
                 continue
     except NoSuchElementException:
-        pass
+        return True
     return False
 
 
 def click_question_card(driver: WebDriver, card_id: str, index: int) -> bool:
     """点击答题卡题号并等待新题加载完成。
 
-    跳转成功标准：.answer_list 中所有 radio/checkbox 均未选中（新题状态）。
-    若有已选中项说明内容未切换，等 1s 后重试点击，最多 5 次。
+    跳转成功标准：.answer_list 中有选项 input 且全部未选中（新题状态）。
+    若选项未渲染或仍有已选中项，等 1.5s 后重试点击，最多 10 次。
     """
-    max_retries = 5
+    max_retries = 10
     for attempt in range(max_retries):
         try:
             card = driver.find_element(By.ID, card_id)
@@ -405,8 +411,8 @@ def click_question_card(driver: WebDriver, card_id: str, index: int) -> bool:
             return True
 
         if attempt < max_retries - 1:
-            logger.debug("第 %d 题点击后仍有已选选项，重试 (%d/%d)", index + 1, attempt + 1, max_retries)
-            short_sleep(1.0)
+            logger.debug("第 %d 题等待新题加载，重试 (%d/%d)", index + 1, attempt + 1, max_retries)
+            short_sleep(1.5)
 
     logger.warning("第 %d 题 %d 次重试后仍未跳转到新题，继续作答", index + 1, max_retries)
     return True
@@ -422,7 +428,7 @@ def check_card_answered(driver: WebDriver, card_id: str) -> bool:
     except NoSuchElementException:
         pass
     try:
-        for opt in driver.find_elements(By.CSS_SELECTOR, ".answer_list input"):
+        for opt in driver.find_elements(By.CSS_SELECTOR, ".answer_list input, .answer_list_box input"):
             if opt.is_selected():
                 return True
     except NoSuchElementException:
@@ -622,7 +628,9 @@ def get_options_list(driver: WebDriver, qtype: str) -> list[dict]:
     for i, opt in enumerate(options):
         label = chr(ord("A") + i)
         val = opt.get_attribute("value") or ""
-        # 尝试从父级 label 或 li 获取选项文本
+
+        # 尝试从父级 label 或 li 获取选项文本（单选/判断结构）
+        text = ""
         try:
             parent_label = opt.find_element(By.XPATH, "./parent::label")
             text = parent_label.text.strip()
@@ -631,6 +639,13 @@ def get_options_list(driver: WebDriver, qtype: str) -> list[dict]:
                 parent_li = opt.find_element(By.XPATH, "./ancestor::li")
                 text = parent_li.text.strip()
             except NoSuchElementException:
-                text = ""
+                pass
+
+        # 多选结构：input 是 .answer_list_box 的直接子元素，文本是兄弟 text node
+        if not text:
+            text = driver.execute_script(
+                "var n = arguments[0].nextSibling; return n ? n.textContent.trim() : '';", opt
+            )
+
         result.append({"label": label, "text": text, "value": val})
     return result

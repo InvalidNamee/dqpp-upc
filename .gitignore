@@ -5,6 +5,7 @@ __pycache__/
 *.db-shm
 *.db-wal
 *.db-journal
+*.log
 .venv/
 venv/
 dist/

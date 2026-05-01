@@ -148,15 +148,20 @@ def upsert_question(
         if answer_json:
             logger.info("新增题目: question_id=%d, type=%s, answer=%s", question_id, qtype, answer_json)
     else:
-        # 补全答案
-        if not existing.answer_values and answer_json:
-            conn.execute(
-                "UPDATE questions SET answer_values=?, question_text=?, type=?, options=? WHERE question_id=?",
-                (answer_json, question_text or existing.question_text, qtype, options_json or existing.options, question_id),
-            )
-            logger.info("补全题目答案: question_id=%d, answer=%s", question_id, answer_json)
-        elif answer_json:
-            pass
+        if answer_json:
+            existing_vals = existing.answers or []
+            if existing_vals != answer_values:
+                conn.execute(
+                    "UPDATE questions SET answer_values=?, question_text=?, type=?, options=? WHERE question_id=?",
+                    (answer_json, question_text or existing.question_text, qtype, options_json or existing.options, question_id),
+                )
+                logger.info("更新题目答案: question_id=%d, old=%s, new=%s", question_id, existing_vals, answer_values)
+            else:
+                # 答案未变，只更新文本和选项
+                conn.execute(
+                    "UPDATE questions SET question_text=?, type=?, options=? WHERE question_id=?",
+                    (question_text or existing.question_text, qtype, options_json or existing.options, question_id),
+                )
         else:
             conn.execute(
                 "UPDATE questions SET question_text=?, type=?, options=? WHERE question_id=?",
