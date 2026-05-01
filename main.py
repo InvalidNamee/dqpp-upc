@@ -104,7 +104,14 @@ def process_one_lesson(driver: webdriver.Chrome, conn, lesson_id: int) -> None:
         answer_question(driver, qtype, known_answers=known_answers)
         short_sleep(0.5)
 
-        if not check_card_answered(driver, card_id):
+        # 确认作答已注册，最多重试 5 次
+        answered = False
+        for retry in range(5):
+            if check_card_answered(driver, card_id):
+                answered = True
+                break
+            short_sleep(0.8)
+        if not answered:
             logger.warning("题目 %d (question_id=%s) 作答后未标记为已完成", idx + 1, card_id)
 
         # 题型组最后一题（单选→多选 / 多选→判断 / 判断→结束）：页面可能自动切走，额外等待

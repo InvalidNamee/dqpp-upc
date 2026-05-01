@@ -317,47 +317,74 @@ def answer_question(
     qtype: str,
     known_answers: Optional[list] = None,
 ) -> list:
-    """对当前题目进行作答。已知答案则勾选匹配项，否则随机作答。
+    """对当前题目进行作答。
 
-    点击选项时优先点击关联的 <label> 或父级 <li>，以避免隐藏 <input> 的
-    element-not-interactable 问题。
-
-    Args:
-        driver: WebDriver 实例。
-        qtype: 题型（'single'/'multi'/'judge'）。
-        known_answers: 已知的正确答案 value 列表（单选/判断为单元素列表）。
-
-    Returns:
-        实际选中的 value 列表。
+    单选/判断：直接点击匹配项或随机选一个。
+    多选：逐轮遍历选项，每次只点一个尚未选中的正确选项，循环直到全部选中或无可选。
     """
-    # short_sleep(1.0)
-    options = get_option_elements(driver, qtype)
-    if not options:
-        logger.warning("未找到任何选项")
-        return []
-
     selected_values: list = []
 
-    if known_answers:
-        known_set = set(str(v) for v in known_answers)
-        for opt in options:
-            val = opt.get_attribute("value") or ""
-            if val in known_set:
-                _click_option_element(opt)
-                selected_values.append(val)
-        logger.info("使用已知答案作答: %s", selected_values)
-    else:
-        if qtype == "multi":
-            count = random.randint(1, len(options))
-            chosen = random.sample(options, count)
-            for opt in chosen:
-                _click_option_element(opt)
-                selected_values.append(opt.get_attribute("value") or "")
+    if qtype in ("single", "judge"):
+        options = get_option_elements(driver, qtype)
+        if not options:
+            logger.warning("未找到任何选项")
+            return []
+        if known_answers:
+            known_set = set(str(v) for v in known_answers)
+            for opt in options:
+                val = opt.get_attribute("value") or ""
+                if val in known_set:
+                    _click_option_element(opt)
+                    selected_values.append(val)
+                    break
         else:
             chosen = random.choice(options)
             _click_option_element(chosen)
             selected_values.append(chosen.get_attribute("value") or "")
-        logger.info("随机作答: %s", selected_values)
+        logger.info("作答: %s", selected_values)
+
+    else:  # multi
+        from selenium.common.exceptions import StaleElementReferenceException
+
+        known_set = set(str(v) for v in known_answers) if known_answers else set()
+        max_rounds = 12
+
+        for _ in range(max_rounds):
+            options = get_option_elements(driver, qtype)
+            if not options:
+                break
+
+            clicked = False
+            for opt in options:
+                try:
+                    selected = opt.is_selected()
+                except StaleElementReferenceException:
+                    continue
+                if selected:
+                    continue
+
+                val = opt.get_attribute("value") or ""
+
+                if known_set:
+                    if val in known_set:
+                        _click_option_element(opt)
+                        selected_values.append(val)
+                        clicked = True
+                        short_sleep(0.4)
+                        break
+                else:
+                    _click_option_element(opt)
+                    selected_values.append(val)
+                    clicked = True
+                    break
+
+            if not clicked:
+                break
+
+        if known_answers:
+            logger.info("已知答案作答: %s (expected=%s)", selected_values, known_answers)
+        else:
+            logger.info("随机作答: %s", selected_values)
 
     return selected_values
 
@@ -441,6 +468,7 @@ def check_card_answered(driver: WebDriver, card_id: str) -> bool:
 
 def submit_exam(driver: WebDriver) -> bool:
     """点击交卷按钮，等待确认弹窗，根据配置决定自动提交或等待确认。"""
+    # input() # 打断，进行调试
     cfg = get_config()
     try:
         submit_btn = wait_for_clickable(driver, By.ID, "submit_exam", timeout=10)
